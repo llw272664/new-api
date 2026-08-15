@@ -317,6 +317,11 @@ func InitResources() error {
 	}
 	model.InitOptionMap()
 
+	// Initialize proxy pool (master node only)
+	if common.IsMasterNode {
+		controller.InitProxyPool()
+	}
+
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()
 

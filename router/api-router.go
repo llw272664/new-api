@@ -354,6 +354,22 @@ func SetApiRouter(router *gin.Engine) {
 			modelsRoute.DELETE("/:id", controller.DeleteModelMeta)
 		}
 
+		// Proxy Pool management (root only)
+		proxyPoolRoute := apiRouter.Group("/proxy-pool")
+		proxyPoolRoute.Use(middleware.AdminAuth())
+		{
+			proxyPoolRoute.GET("/", controller.ListProxyPoolEntries)
+			proxyPoolRoute.GET("/status", controller.GetProxyPoolStatus)
+			proxyPoolRoute.GET("/groups", controller.GetProxyPoolGroups)
+			proxyPoolRoute.GET("/settings", controller.GetProxyPoolSettingsHandler)
+			proxyPoolRoute.POST("/settings", controller.UpdateProxyPoolSettingsHandler)
+			proxyPoolRoute.POST("/", controller.CreateProxyPoolEntryHandler)
+			proxyPoolRoute.GET("/:id", controller.GetProxyPoolEntryHandler)
+			proxyPoolRoute.PUT("/:id", controller.UpdateProxyPoolEntryHandler)
+			proxyPoolRoute.DELETE("/:id", controller.DeleteProxyPoolEntryHandler)
+			proxyPoolRoute.POST("/:id/health", controller.CheckProxyPoolEntryHealth)
+			proxyPoolRoute.POST("/health/batch", controller.BatchCheckProxyPoolHealth)
+		}
 		// Deployments (model deployment management)
 		deploymentsRoute := apiRouter.Group("/deployments")
 		deploymentsRoute.Use(middleware.AdminAuth())

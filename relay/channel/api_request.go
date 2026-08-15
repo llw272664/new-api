@@ -474,18 +474,33 @@ func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
 func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	return doRequest(c, req, info)
 }
+
+// releaseOnCloseBody releases a proxy-pool concurrency slot when the response
+// body is closed, so the slot is held for the full lifetime of the request
+// (including long-lived streams).
+type releaseOnCloseBody struct {
+	io.ReadCloser
+	releaseOnce sync.Once
+	release     func()
+}
+
+func (b *releaseOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.releaseOnce.Do(b.release)
+	return err
+}
+
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	var client *http.Client
 	var err error
-	if info.ChannelSetting.Proxy != "" {
-		client, err = service.GetHttpClientWithProxy(info.ChannelSetting.Proxy)
-		if err != nil {
-			return nil, fmt.Errorf("new proxy http client failed: %w", err)
-		}
-	} else {
-		client = service.GetHttpClient()
+	// Priority 1: Channel explicit proxy
+	// Priority 2: System proxy pool (selected by group)
+	// Priority 3: Direct connection
+	poolGroup := info.ChannelSetting.ProxyPoolGroup
+	client, release, err := service.GetProxyClientForRelay(info.ChannelSetting.Proxy, poolGroup)
+	if err != nil {
+		return nil, fmt.Errorf("proxy client failed: %w", err)
 	}
-
 	var stopPinger context.CancelFunc
 	var pingerDone <-chan struct{}
 	if info.IsStream {
@@ -508,11 +523,24 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 
 	resp, err := client.Do(req)
 	if err != nil {
+		if release != nil {
+			release()
+		}
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {
+		if release != nil {
+			release()
+		}
 		return nil, errors.New("resp is nil")
+	}
+	if release != nil {
+		if resp.Body == nil {
+			release()
+		} else {
+			resp.Body = &releaseOnCloseBody{ReadCloser: resp.Body, release: release}
+		}
 	}
 
 	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
